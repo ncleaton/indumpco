@@ -1,0 +1,32 @@
+#!/bin/bash
+#
+# Usage: incremental-dump-example DUMP_COMMAND BASE_DIRECTORY
+#
+# Create an indumpco compressed dump containing the output of DUMP_COMMAND
+# in a directory under BASE_DIRECTORY with a date-based name.  If sections
+# of the dump duplicate sections of any of the previous dumps, compressed
+# blocks from the previous dumps will be re-used.
+
+dump_command="$1"
+dest_basedir="$2"
+
+dumpdir="$dest_basedir/indumpco-$(date '+%Y%m%d-%H%M%S')"
+
+set -o pipefail
+
+digest="`$dump_command | tee >(indumpco-create "$dumpdir" "$dest_basedir/indumpco-"* && touch "$dumpdir/indumpco-ok") | sha256sum`"
+
+if ! test "$?" = "0"
+then
+	echo "dump command failed" >&2
+	exit -1
+fi
+
+if ! test -e "$dumpdir/indumpco-ok" 
+then
+	echo "indumpco-create failed" >&2
+	exit -1
+fi
+
+echo "$digest" >"$dumpdir/sha256sum"
+
