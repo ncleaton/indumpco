@@ -32,6 +32,7 @@ def split_filehandle_into_segments(src_file):
 		The minimum segment length is 1M, and the mean segment length is
 		about 4M.
 	"""
+	print "fileno is", src_file.fileno()
 	fss = fletcher_sum_split.new(src_file.fileno())
 	while True:
 		seg = fletcher_sum_split.readsegment(fss)
@@ -79,7 +80,7 @@ def extract_dump(dumpdir):
 		yield seg
 
 
-def create_dump(src_fh, outdir, dumpdirs_for_reuse=[], min_blocksize=1000000):
+def create_dump(src_fh, outdir, dumpdirs_for_reuse=[]):
 	os.mkdir(outdir)
 	blkdir = _blockdir(outdir)
 	os.mkdir(blkdir)
