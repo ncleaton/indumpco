@@ -32,7 +32,6 @@ def split_filehandle_into_segments(src_file):
 		The minimum segment length is 1M, and the mean segment length is
 		about 4M.
 	"""
-	print "fileno is", src_file.fileno()
 	fss = fletcher_sum_split.new(src_file.fileno())
 	while True:
 		seg = fletcher_sum_split.readsegment(fss)
