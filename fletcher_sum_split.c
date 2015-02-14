@@ -241,10 +241,18 @@ fletcher_sum_split_new(PyObject *self, PyObject *args)
 	fsss->blk = fsss->blockstore;
 	fsss->prev_blk = fsss->blockstore + SUM_WINDOW;
 
+	fd = dup(fd);
+	if (fd < 0) {
+		PyErr_SetFromErrno(PyExc_IOError);
+		fsss_destroy(fsss);
+		return NULL;
+	}
+
 	fsss->input = fdopen(fd, "r");
 	if (! fsss->input ) {
 		PyErr_SetFromErrno(PyExc_IOError);
 		fsss_destroy(fsss);
+		close(fd);
 		return NULL;
 	}
 
