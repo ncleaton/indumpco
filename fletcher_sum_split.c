@@ -180,6 +180,7 @@ typedef struct {
 	int eof;
 	charsum_t char_sum;
 	fletchsum_mp_t fletch_sum;
+	fletchsum_mp_t precomputed_remove_oldbyte[256];
 } fss_state;
 
 static char *cobj_name = "indumpco.fletcher_sum_split.fss_state";
@@ -224,7 +225,7 @@ static PyObject *
 fletcher_sum_split_new(PyObject *self, PyObject *args)
 {
     fss_state *fsss;
-	int gotbytes, fd;
+	int gotbytes, fd, i;
 
 	if (!PyArg_ParseTuple(args, "i", &fd))
 		return NULL;
@@ -240,6 +241,11 @@ fletcher_sum_split_new(PyObject *self, PyObject *args)
 	}
 	fsss->blk = fsss->blockstore;
 	fsss->prev_blk = fsss->blockstore + SUM_WINDOW;
+
+	for ( i=0 ; i<256 ; i++ ) {
+		fsss->precomputed_remove_oldbyte[i] = \
+				PRIME - (((charsum_t)SUM_WINDOW * (charsum_t)i) % PRIME);
+	}
 
 	fd = dup(fd);
 	if (fd < 0) {
@@ -299,11 +305,6 @@ fletcher_sum_split_readsegment(PyObject *self, PyObject *args)
 	unsigned int gotbytes, newseg_bytes =0;
 	fletchsum_mp_t fletch_sum;
 	int i;
-	fletchsum_mp_t lookup[256];
-
-	for ( i=0 ; i<256 ; i++ ) {
-		lookup[i] = PRIME - (((charsum_t)SUM_WINDOW * (charsum_t)i) % PRIME);
-	}
 
     if (!PyArg_ParseTuple(args, "O", &pobj))
         return NULL;
@@ -337,8 +338,7 @@ fletcher_sum_split_readsegment(PyObject *self, PyObject *args)
 		complete_seg_outbuf = NULL;
 		for ( i=0 ; i<SUM_WINDOW ; i++ ) {
 			char_sum += fsss->blk[i] - fsss->prev_blk[i];
-			//fletch_sum += char_sum + PRIME - (((charsum_t)SUM_WINDOW * (charsum_t)fsss->prev_blk[i]) % PRIME);
-			fletch_sum += char_sum + lookup[fsss->prev_blk[i]];
+			fletch_sum += char_sum + fsss->precomputed_remove_oldbyte[fsss->prev_blk[i]];
 			fletch_sum %= PRIME;
 
 			if (fletch_sum == 0) {
