@@ -170,17 +170,21 @@ typedef unsigned long long fletchsum_mp_t;
 /////////////////////////////////////////////////////////////////
 
 typedef struct {
-	FILE *input;
-	size_t bytes_into_seg;
-	size_t last_hit_at;
-	unsigned char *blk;
-	unsigned char *prev_blk;
-	unsigned char *blockstore;
-	PyObject *outbuf;
-	int eof;
-	charsum_t char_sum;
-	fletchsum_mp_t fletch_sum;
+	FILE *input;               // The file handle from which to read
+	size_t bytes_into_seg;     // How far into the current segment we are
+	size_t last_hit_at;        // Most recent byte at which fletchsum mod prime was 0
+	unsigned char *blk;        // The current input block of SUM_WINDOW bytes
+	unsigned char *prev_blk;   // The previous input block of SUM_WINDOW bytes
+	unsigned char *blockstore; // Storage for blk and prev_blk
+	PyObject *outbuf;          // Where we accumulate the segment
+	int eof;                   // Have we seen EOF on the input filehandle
+	charsum_t char_sum;        // Current character sum
+	fletchsum_mp_t fletch_sum; // Current fletcher sum modulo prime
 	fletchsum_mp_t precomputed_remove_oldbyte[256];
+		/* When rolling the fletcher sum window forward one byte, we need to
+		** add something to fletchsum-mod-prime to remove the effect of the
+		** char that's no-longer in the window.  A lookup table speeds this up
+		** a bit. */
 } fss_state;
 
 static char *cobj_name = "indumpco.fletcher_sum_split.fss_state";
