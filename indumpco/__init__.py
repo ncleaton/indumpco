@@ -1,7 +1,7 @@
 
 import os, hashlib, sys, zlib, re
 import fletcher_sum_split
-#from indumpco import fletcher_sum_split
+from pll_pipe import parallel_pipe
 
 class Error(Exception):
 	pass
@@ -79,7 +79,7 @@ def extract_dump(dumpdir):
 		yield seg
 
 
-def create_dump(src_fh, outdir, dumpdirs_for_reuse=[]):
+def create_dump(src_fh, outdir, dumpdirs_for_reuse=[], thread_count=8):
 	os.mkdir(outdir)
 	blkdir = _blockdir(outdir)
 	os.mkdir(blkdir)
@@ -87,16 +87,22 @@ def create_dump(src_fh, outdir, dumpdirs_for_reuse=[]):
 	idx_fh = open(idx_file, 'w')
 	blk_reuse_dirs = [_blockdir(d) for d in dumpdirs_for_reuse]
 
-	for seg in split_filehandle_into_segments(src_fh):
-		segsum = hashlib.md5(seg).hexdigest()
+	def _seg_processor(segment):
+		segsum = hashlib.md5(segment).hexdigest()
 		dest_path = os.path.join(blkdir, segsum)
 		if not os.path.exists(dest_path):
 			reuse_path = _block_for_reuse(blk_reuse_dirs, segsum)
 			if reuse_path is None:
-				_compress_string_to_file(seg, dest_path)
+				_compress_string_to_file(segment, dest_path)
 			else:
 				os.link(reuse_path, dest_path)
-		idx_fh.write("%d %s\n" % (len(seg), segsum))
+		return segsum, len(segment)
+		
+	src_iterator = split_filehandle_into_segments(src_fh)
+	pipe = parallel_pipe(src_iterator, _seg_processor, thread_count)
+	for segsum, seglen in pipe:
+		idx_fh.write("%d %s\n" % (seglen, segsum))
+
 
 def _block_for_reuse(blk_reuse_dirs, segsum):
 	for blkdir in blk_reuse_dirs:

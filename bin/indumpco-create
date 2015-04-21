@@ -6,6 +6,7 @@ from indumpco import create_dump
 parser = argparse.ArgumentParser(description='Create a new indumpco compressed dump from data on standard input')
 parser.add_argument('dumpdir', help='The root directory for the new dump, it must not already exist')
 parser.add_argument('prevdump', nargs='*', help='The root directories of some pre-existing dumps, from which compressed blocks may be reused')
+parser.add_argument('--threadcount', type=int, help="The number of worker threads to launch", default=8)
 
 args = parser.parse_args()
-create_dump(sys.stdin, args.dumpdir, args.prevdump)
+create_dump(sys.stdin, args.dumpdir, args.prevdump, args.threadcount)
