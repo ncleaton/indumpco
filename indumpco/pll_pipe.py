@@ -6,10 +6,10 @@ _NO_MORE_INPUT = object()
 
 
 class PipeState(object):
-	def __init__(self, dest_queue):
-		self.dest_queue = dest_queue
+	def __init__(self, queue_maxsize):
+		self.dest_queue = Queue.Queue(maxsize=queue_maxsize)
 
-		self.source_queue = Queue.Queue()
+		self.source_queue = Queue.Queue(maxsize=queue_maxsize)
 		self.source_queue_lock = threading.RLock()
 		self.source_queue_finished = False
 
@@ -100,14 +100,13 @@ def _start_daemon_threads(target, args, count):
 
 
 def parallel_pipe(source_iterable, worker_func, thread_count, queue_size=10):
-	q = Queue.Queue(maxsize = thread_count * queue_size)
-	state = PipeState(q)
+	state = PipeState(queue_maxsize = thread_count * queue_size)
 
 	child_threads = _start_daemon_threads(_source_reader_thread, (state, source_iterable), 1) + \
 			_start_daemon_threads(_worker_thread, (state, worker_func), thread_count)
 
 	while True:
-		result = q.get().get()
+		result = state.dest_queue.get().get()
 		if result is _NO_MORE_INPUT:
 			break
 		else:
