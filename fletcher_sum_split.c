@@ -308,7 +308,7 @@ fletcher_sum_split_readsegment(PyObject *self, PyObject *args)
 	charsum_t char_sum;
 	unsigned int gotbytes, newseg_bytes =0;
 	fletchsum_mp_t fletch_sum;
-	int i;
+	int i, blockstart_bytes_into_seg;
 
     if (!PyArg_ParseTuple(args, "O", &pobj))
         return NULL;
@@ -340,13 +340,14 @@ fletcher_sum_split_readsegment(PyObject *self, PyObject *args)
 		}
 
 		complete_seg_outbuf = NULL;
+		blockstart_bytes_into_seg = fsss->bytes_into_seg;
 		for ( i=0 ; i<SUM_WINDOW ; i++ ) {
 			char_sum += fsss->blk[i] - fsss->prev_blk[i];
 			fletch_sum += char_sum + fsss->precomputed_remove_oldbyte[fsss->prev_blk[i]];
 			fletch_sum %= PRIME;
 
 			if (fletch_sum == 0) {
-				if (fsss->bytes_into_seg + i > fsss->last_hit_at + MINSEGSIZE) {
+				if (blockstart_bytes_into_seg + i > fsss->last_hit_at + MINSEGSIZE) {
 					// End of segment pattern found.
 					// Split this block between the current segment and a new segment.
 					if (complete_seg_outbuf) {
@@ -365,13 +366,15 @@ fletcher_sum_split_readsegment(PyObject *self, PyObject *args)
 					}
 					complete_seg_outbuf = fsss->outbuf;
 					fsss->outbuf = newoutbuf;
+					blockstart_bytes_into_seg = 0 - i;
 				}
-				fsss->last_hit_at = fsss->bytes_into_seg + i;
+				fsss->last_hit_at = blockstart_bytes_into_seg + i;
 			}
 		}
 		tmp = fsss->blk;
 		fsss->blk = fsss->prev_blk;
 		fsss->prev_blk = tmp;
+		fsss->bytes_into_seg = blockstart_bytes_into_seg + SUM_WINDOW;
 
 		if (complete_seg_outbuf) {
 			// Found the end of segment pattern somewhere in this block
@@ -383,7 +386,6 @@ fletcher_sum_split_readsegment(PyObject *self, PyObject *args)
 			// No end of segment, this entire block goes in the current segment
 			if (PycStringIO->cwrite(fsss->outbuf, (const char *)fsss->prev_blk, SUM_WINDOW) != SUM_WINDOW)
 				return NULL;
-			fsss->bytes_into_seg += SUM_WINDOW;
 		}
 	}
 }
