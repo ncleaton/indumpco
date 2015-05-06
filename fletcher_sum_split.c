@@ -329,7 +329,9 @@ fletcher_sum_split_readsegment(PyObject *self, PyObject *args)
 	char_sum = fsss->char_sum;
 	fletch_sum = fsss->fletch_sum;
 	for (;;) {
+		Py_BEGIN_ALLOW_THREADS
 		gotbytes = fread(fsss->blk, 1, SUM_WINDOW, fsss->input);
+		Py_END_ALLOW_THREADS
 		if (gotbytes < SUM_WINDOW) {
 			fsss->eof = 1;
 			if (PycStringIO->cwrite(fsss->outbuf, (const char *)fsss->blk, gotbytes) != gotbytes)
