@@ -5,7 +5,8 @@ from indumpco import extract_dump
 
 parser = argparse.ArgumentParser(description='Extract an indumpco compressed dump to standard output')
 parser.add_argument('dumpdir', help='The root directory for the dump to be extracted')
+parser.add_argument('external_blockdir', nargs='*', help='Other directories in which to look for block files')
 
 args = parser.parse_args()
-for block in extract_dump(args.dumpdir):
+for block in extract_dump(args.dumpdir, args.extra_blockdirs):
 	sys.stdout.write(block)

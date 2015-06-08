@@ -57,29 +57,36 @@ def _uncompress_file_to_string(src_file):
 def _blockdir(dump_rootdir):
 	return os.path.join(dump_rootdir, 'blocks')
 
-def extract_dump(dumpdir):
+def _path_search(seg_sum, path):
+	for d in path:
+		f = os.path.join(d, seg_sum)
+		if os.path.exists(f):
+			return f
+	return None
+ 
+def extract_dump(dumpdir, extra_block_dirs=[]):
 	""" Generator function for restoring a compressed dump
 
 		Concatenate the values yielded by this generator to get the
 		uncompressed dump.
 	"""
-	blk_dir = _blockdir(dumpdir)
+	seg_search_path = [_blockdir(dumpdir)] + extra_block_dirs
 	for idxline in open(os.path.join(dumpdir, 'index')):
 		hit = re.match(r'^([0-9]+) (\w+)\s*$', idxline)
 		if not hit:
 			raise FormatError("malformed line in index file", (dumpdir, idxline))
 		seg_len = int(hit.group(1))
 		seg_sum = hit.group(2)
-		blk_file = os.path.join(blk_dir, seg_sum)
-		if not os.path.exists(blk_file):
-			raise FormatError("index references a missing block file", (dumpdir, seg_sum))
+		blk_file = _path_search(seg_sum, seg_search_path)
+		if blk_file is None:
+			raise FormatError("index references a missing block file", (dumpdir, seg_sum, seg_search_path))
 		seg = _uncompress_file_to_string(blk_file)
 		if len(seg) != seg_len:
 			raise FormatError("Uncompressed segment has the wrong length", (dumpdir, blk_file, seg_len))
 		yield seg
 
 
-def create_dump(src_fh, outdir, dumpdirs_for_reuse=[], thread_count=8):
+def create_dump(src_fh, outdir, dumpdirs_for_reuse=[], thread_count=8, remote_seg_list_file=None):
 	os.mkdir(outdir)
 	blkdir = _blockdir(outdir)
 	os.mkdir(blkdir)
@@ -87,10 +94,15 @@ def create_dump(src_fh, outdir, dumpdirs_for_reuse=[], thread_count=8):
 	idx_fh = open(idx_file, 'w')
 	blk_reuse_dirs = [_blockdir(d) for d in dumpdirs_for_reuse]
 
+	remote_segs = set()
+	if remote_seg_list_file is not None:
+		for line in open(remote_seg_list_file):
+			remote_segs.add(line.strip())
+
 	def _seg_processor(segment):
 		segsum = hashlib.md5(segment).hexdigest()
 		dest_path = os.path.join(blkdir, segsum)
-		if not os.path.exists(dest_path):
+		if segsum not in remote_segs and not os.path.exists(dest_path):
 			reuse_path = _block_for_reuse(blk_reuse_dirs, segsum)
 			if reuse_path is None:
 				_compress_string_to_file(segment, dest_path)
