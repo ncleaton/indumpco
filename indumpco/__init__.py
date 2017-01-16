@@ -64,14 +64,15 @@ def _path_search(seg_sum, path):
 			return f
 	return None
  
-def extract_dump(dumpdir, extra_block_dirs=[]):
+def extract_dump(dumpdir, extra_block_dirs=[], thread_count=4):
 	""" Generator function for restoring a compressed dump
 
 		Concatenate the values yielded by this generator to get the
 		uncompressed dump.
 	"""
 	seg_search_path = [_blockdir(dumpdir)] + extra_block_dirs
-	for idxline in open(os.path.join(dumpdir, 'index')):
+
+	def _idxline_processor(idxline):
 		hit = re.match(r'^([0-9]+) (\w+)\s*$', idxline)
 		if not hit:
 			raise FormatError("malformed line in index file", (dumpdir, idxline))
@@ -83,8 +84,12 @@ def extract_dump(dumpdir, extra_block_dirs=[]):
 		seg = _uncompress_file_to_string(blk_file)
 		if len(seg) != seg_len:
 			raise FormatError("Uncompressed segment has the wrong length", (dumpdir, blk_file, seg_len))
-		yield seg
+		return seg
 
+	idx_line_iteratable = open(os.path.join(dumpdir, 'index'))
+	pipe = parallel_pipe(idx_line_iteratable, _idxline_processor, thread_count)
+	for seg in pipe:
+		yield seg
 
 def create_dump(src_fh, outdir, dumpdirs_for_reuse=[], thread_count=8, remote_seg_list_file=None):
 	os.mkdir(outdir)
