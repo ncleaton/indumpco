@@ -3,7 +3,7 @@ setup(
     name = "InDumpCo",
     version = "0.1",
     packages = ['indumpco'],
-	scripts = ['bin/indumpco-create', 'bin/indumpco-extract'],
+	scripts = ['bin/indumpco-create', 'bin/indumpco-extract', 'bin/indumpco-repack'],
     ext_modules = [Extension("indumpco.fletcher_sum_split", sources=["fletcher_sum_split.c"])],
 	test_suite = 'nose.collector',
 

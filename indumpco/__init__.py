@@ -1,14 +1,14 @@
 
-import os, hashlib, sys, zlib, re
+import os, hashlib, sys, zlib, lzma, re
 import fletcher_sum_split
 from pll_pipe import parallel_pipe
+from lookahead_queue import LookaheadQueue
 
 class Error(Exception):
 	pass
 
 class FormatError(Error):
 	pass
-
 
 def split_filehandle_into_segments(src_file):
 	""" Read an open file to EOF, split it repeatably into segments
@@ -39,6 +39,13 @@ def split_filehandle_into_segments(src_file):
 			return
 		yield seg
 
+def parse_idxline(idxline):
+	hit = re.match(r'^([0-9]+) (\w+)\s*$', idxline)
+	if not hit:
+		raise FormatError("malformed line in index file", (idxline,))
+	seg_len = int(hit.group(1))
+	seg_sum = hit.group(2)
+	return seg_len, seg_sum
 
 def _compress_string_to_file(src_str, dest_file):
 	f = open(dest_file, 'w')
@@ -46,13 +53,63 @@ def _compress_string_to_file(src_str, dest_file):
 	f.write(zlib.compress(src_str, 9))
 	f.close()
 
-def _uncompress_file_to_string(src_file):
+def _uncompress_file_to_string(src_file, want_seg_sum=None, laq=None):
 	f = open(src_file)
 	format_byte = f.read(1)
 	if format_byte == 'z':
 		return zlib.decompress(f.read())
+	elif format_byte == 'x':
+		if want_seg_sum is None or laq is None:
+			raise RuntimeError('require want_seg_sum and laq to unpack a compound block')
+		overall_sum = f.readline().strip()
+		embedded_seg_count = int(f.readline().strip())
+		embedded_segs = list()
+		for _ in range(embedded_seg_count):
+			embedded_segs.append(f.readline())
+		xz_data = f.read()
+		unpacked_data = lzma.decompress(xz_data)
+		offset = 0
+		desired_data = None
+		for idxline in embedded_segs:
+			seg_len, seg_sum = parse_idxline(idxline)
+			laq.put_answer(idxline, unpacked_data[offset:offset+seg_len])
+			if seg_sum == want_seg_sum:
+				desired_data = unpacked_data[offset:offset+seg_len]
+			offset += seg_len
+		if offset != len(unpacked_data):
+			raise ValueError("xz data len not consistent with seg lens in header", src_file)
+		if want_seg_sum == overall_sum:
+			# desired data is the entire xz block
+			return unpacked_data
+		elif desired_data is not None:
+			return desired_data
+		else:
+			raise ValueError("desired sum not found in compound block", (src_file, want_seg_sum))
 	else:
 		raise FormatError("invalid first byte of compressed block", (src_file, format_byte))
+
+def repack_blocks(blockdir, repack_sums):
+	idxlines = list()
+	compound_data = ''
+	for s in repack_sums:
+		seg_data = _uncompress_file_to_string(os.path.join(blockdir, s))
+		idxlines.append('%d %s\n' % (len(seg_data), s))
+		compound_data += seg_data
+
+	compound_sum = hashlib.md5(compound_data).hexdigest()
+	compressed_data = lzma.compress(compound_data)
+	del compound_data
+		
+	compound_file = os.path.join(blockdir, compound_sum)
+	f = open(compound_file, 'w')
+	f.write('x%s\n%d\n%s' % (compound_sum, len(idxlines), ''.join(idxlines)))
+	f.write(compressed_data)
+	f.close()
+
+	for s in repack_sums:
+		f =  os.path.join(blockdir, s)
+		os.link(compound_file, f+'.tmp')
+		os.rename(f+'.tmp', f)
 
 def _blockdir(dump_rootdir):
 	return os.path.join(dump_rootdir, 'blocks')
@@ -71,25 +128,24 @@ def extract_dump(dumpdir, extra_block_dirs=[], thread_count=4):
 		uncompressed dump.
 	"""
 	seg_search_path = [_blockdir(dumpdir)] + extra_block_dirs
+	idxline_laq = LookaheadQueue(src_iterable = open(os.path.join(dumpdir, 'index')))
 
 	def _idxline_processor(idxline):
-		hit = re.match(r'^([0-9]+) (\w+)\s*$', idxline)
-		if not hit:
-			raise FormatError("malformed line in index file", (dumpdir, idxline))
-		seg_len = int(hit.group(1))
-		seg_sum = hit.group(2)
-		blk_file = _path_search(seg_sum, seg_search_path)
-		if blk_file is None:
-			raise FormatError("index references a missing block file", (dumpdir, seg_sum, seg_search_path))
-		seg = _uncompress_file_to_string(blk_file)
-		if len(seg) != seg_len:
-			raise FormatError("Uncompressed segment has the wrong length", (dumpdir, blk_file, seg_len))
+		if idxline_laq.have_answer(idxline):
+			seg = idxline_laq.get_answer(idxline)
+		else:
+			seg_len, seg_sum = parse_idxline(idxline)
+			blk_file = _path_search(seg_sum, seg_search_path)
+			if blk_file is None:
+				raise FormatError("index references a missing block file", (dumpdir, seg_sum, seg_search_path))
+			seg = _uncompress_file_to_string(blk_file, seg_sum, idxline_laq)
+			if len(seg) != seg_len:
+				raise FormatError("Uncompressed segment has the wrong length", (dumpdir, blk_file, seg_len))
+
+		idxline_laq.dec_refcnt(idxline)
 		return seg
 
-	idx_line_iteratable = open(os.path.join(dumpdir, 'index'))
-	pipe = parallel_pipe(idx_line_iteratable, _idxline_processor, thread_count)
-	for seg in pipe:
-		yield seg
+	return parallel_pipe(idxline_laq, _idxline_processor, thread_count)
 
 def create_dump(src_fh, outdir, dumpdirs_for_reuse=[], thread_count=8, remote_seg_list_file=None):
 	os.mkdir(outdir)
@@ -119,7 +175,6 @@ def create_dump(src_fh, outdir, dumpdirs_for_reuse=[], thread_count=8, remote_se
 	pipe = parallel_pipe(src_iterator, _seg_processor, thread_count)
 	for segsum, seglen in pipe:
 		idx_fh.write("%d %s\n" % (seglen, segsum))
-
 
 def _block_for_reuse(blk_reuse_dirs, segsum):
 	for blkdir in blk_reuse_dirs:
