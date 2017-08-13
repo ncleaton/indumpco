@@ -170,21 +170,21 @@ typedef unsigned long long fletchsum_mp_t;
 /////////////////////////////////////////////////////////////////
 
 typedef struct {
-	FILE *input;               // The file handle from which to read
-	size_t bytes_into_seg;     // How far into the current segment we are
-	size_t last_hit_at;        // Most recent byte at which fletchsum mod prime was 0
-	unsigned char *blk;        // The current input block of SUM_WINDOW bytes
-	unsigned char *prev_blk;   // The previous input block of SUM_WINDOW bytes
-	unsigned char *blockstore; // Storage for blk and prev_blk
-	PyObject *outbuf;          // Where we accumulate the segment
-	int eof;                   // Have we seen EOF on the input filehandle
-	charsum_t char_sum;        // Current character sum
-	fletchsum_mp_t fletch_sum; // Current fletcher sum modulo prime
-	fletchsum_mp_t precomputed_remove_oldbyte[256];
-		/* When rolling the fletcher sum window forward one byte, we need to
-		** add something to fletchsum-mod-prime to remove the effect of the
-		** char that's no-longer in the window.  A lookup table speeds this up
-		** a bit. */
+    FILE *input;               // The file handle from which to read
+    size_t bytes_into_seg;     // How far into the current segment we are
+    size_t last_hit_at;        // Most recent byte at which fletchsum mod prime was 0
+    unsigned char *blk;        // The current input block of SUM_WINDOW bytes
+    unsigned char *prev_blk;   // The previous input block of SUM_WINDOW bytes
+    unsigned char *blockstore; // Storage for blk and prev_blk
+    PyObject *outbuf;          // Where we accumulate the segment
+    int eof;                   // Have we seen EOF on the input filehandle
+    charsum_t char_sum;        // Current character sum
+    fletchsum_mp_t fletch_sum; // Current fletcher sum modulo prime
+    fletchsum_mp_t precomputed_remove_oldbyte[256];
+        /* When rolling the fletcher sum window forward one byte, we need to
+        ** add something to fletchsum-mod-prime to remove the effect of the
+        ** char that's no-longer in the window.  A lookup table speeds this up
+        ** a bit. */
 } fss_state;
 
 static char *cobj_name = "indumpco.fletcher_sum_split.fss_state";
@@ -192,19 +192,19 @@ static char *cobj_name = "indumpco.fletcher_sum_split.fss_state";
 static void
 fsss_destroy(fss_state *fsss)
 {
-	if (fsss) {
-		if (fsss->input)
-			fclose(fsss->input);
-		free(fsss->blockstore);
-		Py_XDECREF(fsss->outbuf);
-		free(fsss);
-	}
+    if (fsss) {
+        if (fsss->input)
+            fclose(fsss->input);
+        free(fsss->blockstore);
+        Py_XDECREF(fsss->outbuf);
+        free(fsss);
+    }
 }
 
 static void
 fsss_pyobj_destroy(PyObject *p)
 {
-	fsss_destroy(PyCapsule_GetPointer(p, cobj_name));
+    fsss_destroy(PyCapsule_GetPointer(p, cobj_name));
 }
 
 static void
@@ -212,210 +212,210 @@ sums_from_scratch(fss_state *fsss, unsigned char *buf)
 /* Compute the character sum and fletcher sum of a buffer of length SUM_WINDOW.
 */
 {
-	charsum_t char_sum =0;
-	fletchsum_t fletch_sum =0;
-	int i;
+    charsum_t char_sum =0;
+    fletchsum_t fletch_sum =0;
+    int i;
 
-	for ( i=0 ; i<SUM_WINDOW ; i++ ) {
-		char_sum += buf[i];
-		fletch_sum += char_sum;
-	}
+    for ( i=0 ; i<SUM_WINDOW ; i++ ) {
+        char_sum += buf[i];
+        fletch_sum += char_sum;
+    }
 
-	fsss->char_sum = char_sum;
-	fsss->fletch_sum = fletch_sum % PRIME;
+    fsss->char_sum = char_sum;
+    fsss->fletch_sum = fletch_sum % PRIME;
 }
 
 static PyObject *
 fletcher_sum_split_new(PyObject *self, PyObject *args)
 {
     fss_state *fsss;
-	int gotbytes, fd, i;
+    int gotbytes, fd, i;
 
-	if (!PyArg_ParseTuple(args, "i", &fd))
-		return NULL;
+    if (!PyArg_ParseTuple(args, "i", &fd))
+        return NULL;
 
-	fsss = malloc(sizeof(*fsss));
+    fsss = malloc(sizeof(*fsss));
     if (!fsss)
-		return PyErr_NoMemory();
-	fsss->blockstore = malloc(2 * SUM_WINDOW);
-	fsss->outbuf = PycStringIO->NewOutput(2 * MEAN_SEGMENT_SIZE);
-	if (!fsss->blockstore || !fsss->outbuf) {
-		fsss_destroy(fsss);
-		return PyErr_NoMemory();
-	}
-	fsss->blk = fsss->blockstore;
-	fsss->prev_blk = fsss->blockstore + SUM_WINDOW;
+        return PyErr_NoMemory();
+    fsss->blockstore = malloc(2 * SUM_WINDOW);
+    fsss->outbuf = PycStringIO->NewOutput(2 * MEAN_SEGMENT_SIZE);
+    if (!fsss->blockstore || !fsss->outbuf) {
+        fsss_destroy(fsss);
+        return PyErr_NoMemory();
+    }
+    fsss->blk = fsss->blockstore;
+    fsss->prev_blk = fsss->blockstore + SUM_WINDOW;
 
-	for ( i=0 ; i<256 ; i++ ) {
-		fsss->precomputed_remove_oldbyte[i] = \
-				PRIME - (((charsum_t)SUM_WINDOW * (charsum_t)i) % PRIME);
-	}
+    for ( i=0 ; i<256 ; i++ ) {
+        fsss->precomputed_remove_oldbyte[i] = \
+                PRIME - (((charsum_t)SUM_WINDOW * (charsum_t)i) % PRIME);
+    }
 
-	fd = dup(fd);
-	if (fd < 0) {
-		PyErr_SetFromErrno(PyExc_IOError);
-		fsss_destroy(fsss);
-		return NULL;
-	}
+    fd = dup(fd);
+    if (fd < 0) {
+        PyErr_SetFromErrno(PyExc_IOError);
+        fsss_destroy(fsss);
+        return NULL;
+    }
 
-	fsss->input = fdopen(fd, "r");
-	if (! fsss->input ) {
-		PyErr_SetFromErrno(PyExc_IOError);
-		fsss_destroy(fsss);
-		close(fd);
-		return NULL;
-	}
+    fsss->input = fdopen(fd, "r");
+    if (! fsss->input ) {
+        PyErr_SetFromErrno(PyExc_IOError);
+        fsss_destroy(fsss);
+        close(fd);
+        return NULL;
+    }
 
-	fsss->bytes_into_seg = 0;
-	fsss->last_hit_at = 0;
-	fsss->eof = 0;
+    fsss->bytes_into_seg = 0;
+    fsss->last_hit_at = 0;
+    fsss->eof = 0;
 
-	gotbytes = fread(fsss->prev_blk, 1, SUM_WINDOW, fsss->input);
-	fsss->bytes_into_seg = gotbytes;
-	if (PycStringIO->cwrite(fsss->outbuf, (const char *)fsss->prev_blk, gotbytes) != gotbytes) {
-		fsss_destroy(fsss);
-		return NULL;
-	}
+    gotbytes = fread(fsss->prev_blk, 1, SUM_WINDOW, fsss->input);
+    fsss->bytes_into_seg = gotbytes;
+    if (PycStringIO->cwrite(fsss->outbuf, (const char *)fsss->prev_blk, gotbytes) != gotbytes) {
+        fsss_destroy(fsss);
+        return NULL;
+    }
 
-	if (gotbytes == SUM_WINDOW) {
-		sums_from_scratch(fsss, fsss->prev_blk);
-		if (fsss->fletch_sum == 0) {
-			fsss->last_hit_at = SUM_WINDOW;
-		}
-	} else {
-		fsss->eof = 1;
-	}
+    if (gotbytes == SUM_WINDOW) {
+        sums_from_scratch(fsss, fsss->prev_blk);
+        if (fsss->fletch_sum == 0) {
+            fsss->last_hit_at = SUM_WINDOW;
+        }
+    } else {
+        fsss->eof = 1;
+    }
 
-	return PyCapsule_New(fsss, cobj_name, fsss_pyobj_destroy);
+    return PyCapsule_New(fsss, cobj_name, fsss_pyobj_destroy);
 }
 
 static PyObject *
 convert_cstringio_to_string(PyObject *cstringio)
 {
-	PyObject *res;
+    PyObject *res;
 
-	res = PycStringIO->cgetvalue(cstringio);
-	Py_DECREF(cstringio);
-	return res;
+    res = PycStringIO->cgetvalue(cstringio);
+    Py_DECREF(cstringio);
+    return res;
 }
 
 static PyObject *
 fletcher_sum_split_readsegment(PyObject *self, PyObject *args)
 {
     fss_state *fsss;
-	PyObject *pobj, *complete_seg_outbuf, *newoutbuf;
-	unsigned char *tmp;
-	charsum_t char_sum;
-	unsigned int gotbytes, newseg_bytes =0;
-	fletchsum_mp_t fletch_sum;
-	int i, blockstart_bytes_into_seg;
+    PyObject *pobj, *complete_seg_outbuf, *newoutbuf;
+    unsigned char *tmp;
+    charsum_t char_sum;
+    unsigned int gotbytes, newseg_bytes =0;
+    fletchsum_mp_t fletch_sum;
+    int i, blockstart_bytes_into_seg;
 
     if (!PyArg_ParseTuple(args, "O", &pobj))
         return NULL;
     fsss = PyCapsule_GetPointer(pobj, cobj_name);
-	if (!fsss)
+    if (!fsss)
         return NULL;
 
-	if (fsss->eof) {
-		if (fsss->outbuf) {
-			pobj = convert_cstringio_to_string(fsss->outbuf);
-			fsss->outbuf = NULL;
-			return pobj;
-		} else {
-			Py_RETURN_NONE;
-		}
-	}
+    if (fsss->eof) {
+        if (fsss->outbuf) {
+            pobj = convert_cstringio_to_string(fsss->outbuf);
+            fsss->outbuf = NULL;
+            return pobj;
+        } else {
+            Py_RETURN_NONE;
+        }
+    }
 
-	char_sum = fsss->char_sum;
-	fletch_sum = fsss->fletch_sum;
-	for (;;) {
-		Py_BEGIN_ALLOW_THREADS
-		gotbytes = fread(fsss->blk, 1, SUM_WINDOW, fsss->input);
-		Py_END_ALLOW_THREADS
-		if (gotbytes < SUM_WINDOW) {
-			fsss->eof = 1;
-			if (PycStringIO->cwrite(fsss->outbuf, (const char *)fsss->blk, gotbytes) != gotbytes)
-				return NULL;
-			pobj = fsss->outbuf;
-			fsss->outbuf = NULL;
-			return convert_cstringio_to_string(pobj);
-		}
+    char_sum = fsss->char_sum;
+    fletch_sum = fsss->fletch_sum;
+    for (;;) {
+        Py_BEGIN_ALLOW_THREADS
+        gotbytes = fread(fsss->blk, 1, SUM_WINDOW, fsss->input);
+        Py_END_ALLOW_THREADS
+        if (gotbytes < SUM_WINDOW) {
+            fsss->eof = 1;
+            if (PycStringIO->cwrite(fsss->outbuf, (const char *)fsss->blk, gotbytes) != gotbytes)
+                return NULL;
+            pobj = fsss->outbuf;
+            fsss->outbuf = NULL;
+            return convert_cstringio_to_string(pobj);
+        }
 
-		complete_seg_outbuf = NULL;
-		blockstart_bytes_into_seg = fsss->bytes_into_seg;
-		for ( i=0 ; i<SUM_WINDOW ; i++ ) {
-			char_sum += fsss->blk[i] - fsss->prev_blk[i];
-			fletch_sum += char_sum + fsss->precomputed_remove_oldbyte[fsss->prev_blk[i]];
-			fletch_sum %= PRIME;
+        complete_seg_outbuf = NULL;
+        blockstart_bytes_into_seg = fsss->bytes_into_seg;
+        for ( i=0 ; i<SUM_WINDOW ; i++ ) {
+            char_sum += fsss->blk[i] - fsss->prev_blk[i];
+            fletch_sum += char_sum + fsss->precomputed_remove_oldbyte[fsss->prev_blk[i]];
+            fletch_sum %= PRIME;
 
-			if (fletch_sum == 0) {
-				if (blockstart_bytes_into_seg + i > fsss->last_hit_at + MINSEGSIZE) {
-					// End of segment pattern found.
-					// Split this block between the current segment and a new segment.
-					if (complete_seg_outbuf) {
-						PyErr_SetString(PyExc_AssertionError, "multiple segment end patterns in a block, should be impossible");
-						return NULL;
-					}
-					if (PycStringIO->cwrite(fsss->outbuf, (const char *)fsss->blk, i+1) != i+1)
-						return NULL;
-					newoutbuf = PycStringIO->NewOutput(2 * MEAN_SEGMENT_SIZE);
-					if (!newoutbuf)
-						return NULL;
-					newseg_bytes = SUM_WINDOW - (i+1);
-					if (newseg_bytes > 0) {
-						if (PycStringIO->cwrite(newoutbuf, (const char *)(fsss->blk+i+1), newseg_bytes) != newseg_bytes)
-							return NULL;
-					}
-					complete_seg_outbuf = fsss->outbuf;
-					fsss->outbuf = newoutbuf;
-					blockstart_bytes_into_seg = 0 - i;
-				}
-				fsss->last_hit_at = blockstart_bytes_into_seg + i;
-			}
-		}
-		tmp = fsss->blk;
-		fsss->blk = fsss->prev_blk;
-		fsss->prev_blk = tmp;
-		fsss->bytes_into_seg = blockstart_bytes_into_seg + SUM_WINDOW;
+            if (fletch_sum == 0) {
+                if (blockstart_bytes_into_seg + i > fsss->last_hit_at + MINSEGSIZE) {
+                    // End of segment pattern found.
+                    // Split this block between the current segment and a new segment.
+                    if (complete_seg_outbuf) {
+                        PyErr_SetString(PyExc_AssertionError, "multiple segment end patterns in a block, should be impossible");
+                        return NULL;
+                    }
+                    if (PycStringIO->cwrite(fsss->outbuf, (const char *)fsss->blk, i+1) != i+1)
+                        return NULL;
+                    newoutbuf = PycStringIO->NewOutput(2 * MEAN_SEGMENT_SIZE);
+                    if (!newoutbuf)
+                        return NULL;
+                    newseg_bytes = SUM_WINDOW - (i+1);
+                    if (newseg_bytes > 0) {
+                        if (PycStringIO->cwrite(newoutbuf, (const char *)(fsss->blk+i+1), newseg_bytes) != newseg_bytes)
+                            return NULL;
+                    }
+                    complete_seg_outbuf = fsss->outbuf;
+                    fsss->outbuf = newoutbuf;
+                    blockstart_bytes_into_seg = 0 - i;
+                }
+                fsss->last_hit_at = blockstart_bytes_into_seg + i;
+            }
+        }
+        tmp = fsss->blk;
+        fsss->blk = fsss->prev_blk;
+        fsss->prev_blk = tmp;
+        fsss->bytes_into_seg = blockstart_bytes_into_seg + SUM_WINDOW;
 
-		if (complete_seg_outbuf) {
-			// Found the end of segment pattern somewhere in this block
-			fsss->char_sum = char_sum;
-			fsss->fletch_sum = fletch_sum;
-			fsss->bytes_into_seg = newseg_bytes;
-			return convert_cstringio_to_string(complete_seg_outbuf);
-		} else {
-			// No end of segment, this entire block goes in the current segment
-			if (PycStringIO->cwrite(fsss->outbuf, (const char *)fsss->prev_blk, SUM_WINDOW) != SUM_WINDOW)
-				return NULL;
-		}
-	}
+        if (complete_seg_outbuf) {
+            // Found the end of segment pattern somewhere in this block
+            fsss->char_sum = char_sum;
+            fsss->fletch_sum = fletch_sum;
+            fsss->bytes_into_seg = newseg_bytes;
+            return convert_cstringio_to_string(complete_seg_outbuf);
+        } else {
+            // No end of segment, this entire block goes in the current segment
+            if (PycStringIO->cwrite(fsss->outbuf, (const char *)fsss->prev_blk, SUM_WINDOW) != SUM_WINDOW)
+                return NULL;
+        }
+    }
 }
 
 /*
 static PyObject *
 fletcher_sum_split_diagstuff(PyObject *self, PyObject *args)
 {
-	unsigned char *splurge;
-	int i;
-	fss_state fsss;
+    unsigned char *splurge;
+    int i;
+    fss_state fsss;
 
-	fprintf(stderr, "MINSEGSIZE_BITS=%d, MINSEGSIZE=%d\n", MINSEGSIZE_BITS, MINSEGSIZE);
-	fprintf(stderr, "SUM_WINDOW_BITS=%d, SUM_WINDOW=%d, PRIME=%d\n", SUM_WINDOW_BITS, SUM_WINDOW, PRIME);
-	fprintf(stderr, "CHARSUM_BITS=%d, FLETCHSUM_BITS=%d, FLETCHSUM_MODPRIME_BITS=%d\n", CHARSUM_BITS, FLETCHSUM_BITS, FLETCHSUM_MODPRIME_BITS);
-	fprintf(stderr, "sizeof(charsum_t)=%lu, sizeof(fletchsum_t)=%lu, sizeof(fletchsum_mp_t)=%lu\n", sizeof(charsum_t), sizeof(fletchsum_t), sizeof(fletchsum_mp_t));
+    fprintf(stderr, "MINSEGSIZE_BITS=%d, MINSEGSIZE=%d\n", MINSEGSIZE_BITS, MINSEGSIZE);
+    fprintf(stderr, "SUM_WINDOW_BITS=%d, SUM_WINDOW=%d, PRIME=%d\n", SUM_WINDOW_BITS, SUM_WINDOW, PRIME);
+    fprintf(stderr, "CHARSUM_BITS=%d, FLETCHSUM_BITS=%d, FLETCHSUM_MODPRIME_BITS=%d\n", CHARSUM_BITS, FLETCHSUM_BITS, FLETCHSUM_MODPRIME_BITS);
+    fprintf(stderr, "sizeof(charsum_t)=%lu, sizeof(fletchsum_t)=%lu, sizeof(fletchsum_mp_t)=%lu\n", sizeof(charsum_t), sizeof(fletchsum_t), sizeof(fletchsum_mp_t));
 
-	splurge = malloc(SUM_WINDOW);
-	for ( i=0 ; i<SUM_WINDOW ; i++ ) {
-		splurge[i] = i % 256;
-	}
+    splurge = malloc(SUM_WINDOW);
+    for ( i=0 ; i<SUM_WINDOW ; i++ ) {
+        splurge[i] = i % 256;
+    }
 
-	for ( i=0 ; i<3000 ; i++ ) {
-		sums_from_scratch(&fsss, splurge);
-		splurge[i] += fsss.char_sum % 128;
-	}
+    for ( i=0 ; i<3000 ; i++ ) {
+        sums_from_scratch(&fsss, splurge);
+        splurge[i] += fsss.char_sum % 128;
+    }
 
-	Py_RETURN_NONE;
+    Py_RETURN_NONE;
 }
 */
 
@@ -429,6 +429,6 @@ static PyMethodDef fletcher_sum_split_methods[] = {
 void
 initfletcher_sum_split(void)
 {
-	PycString_IMPORT;
-	Py_InitModule("indumpco.fletcher_sum_split", fletcher_sum_split_methods);
+    PycString_IMPORT;
+    Py_InitModule("indumpco.fletcher_sum_split", fletcher_sum_split_methods);
 }
