@@ -1,9 +1,7 @@
 
 import threading, Queue, sys
 
-
 _NO_MORE_INPUT = object()
-
 
 class PipeState(object):
 	def __init__(self, queue_maxsize):
@@ -15,10 +13,6 @@ class PipeState(object):
 
 		self.exception = None
 		self.exception_lock = threading.RLock()
-
-	def get_exception(self, exc):
-		with self.exception_lock:
-			return self.exception
 
 	def record_exception(self, exc):
 		with self.exception_lock:
@@ -112,10 +106,17 @@ def parallel_pipe(source_iterable, worker_func, thread_count, queue_size=10):
 		else:
 			yield result
 
+	# Drain the dest queue, in case we're exiting on an exception and
+	# something is blocked on put.
+	while True:
+		try:
+			state.dest_queue.get(False)
+		except Queue.Empty:
+			break
+
 	for t in child_threads:
 		t.join()
 
 	e = state.exception
 	if e is not None:
 		raise e[0], e[1], e[2]
-
