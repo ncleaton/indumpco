@@ -130,7 +130,7 @@ def extract_dump(dumpdir, extra_block_dirs=[], thread_count=4):
     seg_search_path = [_blockdir(dumpdir)] + extra_block_dirs
     idxline_laq = LookaheadQueue(src_iterable = open(os.path.join(dumpdir, 'index')))
 
-    def _idxline_processor(idxline):
+    def _idxline_processor(q, idxline):
         if idxline_laq.have_answer(idxline):
             seg = idxline_laq.get_answer(idxline)
         else:
@@ -143,7 +143,7 @@ def extract_dump(dumpdir, extra_block_dirs=[], thread_count=4):
                 raise FormatError("Uncompressed segment has the wrong length", (dumpdir, blk_file, seg_len))
 
         idxline_laq.dec_refcnt(idxline)
-        return seg
+        q.put(seg)
 
     return parallel_pipe(idxline_laq, _idxline_processor, thread_count)
 
@@ -160,7 +160,7 @@ def create_dump(src_fh, outdir, dumpdirs_for_reuse=[], thread_count=8, remote_se
         for line in open(remote_seg_list_file):
             remote_segs.add(line.strip())
 
-    def _seg_processor(segment):
+    def _seg_processor(q, segment):
         segsum = hashlib.md5(segment).hexdigest()
         dest_path = os.path.join(blkdir, segsum)
         if segsum not in remote_segs and not os.path.exists(dest_path):
@@ -169,7 +169,7 @@ def create_dump(src_fh, outdir, dumpdirs_for_reuse=[], thread_count=8, remote_se
                 _compress_string_to_file(segment, dest_path)
             else:
                 os.link(reuse_path, dest_path)
-        return segsum, len(segment)
+        q.put((segsum, len(segment)))
         
     src_iterator = split_filehandle_into_segments(src_fh)
     pipe = parallel_pipe(src_iterator, _seg_processor, thread_count)

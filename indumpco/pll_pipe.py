@@ -41,7 +41,6 @@ def _source_reader_thread(pipe_state, source_iterable):
 
 def _worker_thread(pipe_state, worker_func):
     # A thread to process jobs from input queue to output queue.
-    my_q = Queue.Queue()
     try:
         while True:
             # There's a lock around the process of obtaining a job from the input queue
@@ -49,6 +48,7 @@ def _worker_thread(pipe_state, worker_func):
             # that job order is preserved when there are many worker threads.
             # The placeholder takes the form of a reference to another queue, to which the
             # result will be pushed when it's ready.
+            my_q = Queue.Queue()
             with pipe_state.source_queue_lock:
                 if pipe_state.source_queue_finished:
                     return
@@ -65,7 +65,7 @@ def _worker_thread(pipe_state, worker_func):
 
                 pipe_state.dest_queue.put(my_q)
 
-            my_q.put(worker_func(job))
+            worker_func(my_q, job)
 
     except Exception:
         pipe_state.record_exception(sys.exc_info())

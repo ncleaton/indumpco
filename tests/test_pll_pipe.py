@@ -1,4 +1,4 @@
-import sys, os, time
+import sys, os, time, threading
 from nose.tools import assert_equals, raises
 
 for libdir in os.listdir('build'):
@@ -10,14 +10,13 @@ from indumpco.pll_pipe import parallel_pipe
 class FaultyWorkerError(StandardError):
     pass
 
-def worker_function(job):
-    print >>sys.stderr, "worker got job", job
+def worker_function(q, job):
     if job == "die_worker_die":
         raise FaultyWorkerError("worker died")
     elif job == 0:
         raise ValueError("job 0 made it to a worker")
     time.sleep(job / 100)
-    return job
+    q.put(job)
 
 def faulty_job_generator():
     yield 1
@@ -55,3 +54,38 @@ def test_exception_in_source_iterator_1thread():
 def test_exception_in_source_iterator_2threads():
     return list(parallel_pipe(faulty_job_generator(), worker_function, 2))
 
+def test_job_delegation():
+    # Allow only one thread at a time to do actual work, other worker
+    # threads delegate their tasks to this active thread.
+
+    class DelegateState(object):
+        def __init__(self):
+            self.lock = threading.RLock()
+            self.running = False
+            self.jobs = []
+    dg_state = DelegateState()
+
+    def dg_worker(q, job):
+        with dg_state.lock:
+            dg_state.jobs.append((q, job))
+            if dg_state.running:
+                # another thread is active, let it do my work
+                return
+            else:
+                # I am the active thread
+                dg_state.running = True
+        while True:
+            with dg_state.lock:
+                if len(dg_state.jobs) == 0:
+                    dg_state.running = False
+                    return
+                batch = dg_state.jobs
+                dg_state.jobs = []
+            for q, job in batch:
+                time.sleep(job / 100)
+                q.put(job)
+
+    jobs = [3,15,1,9,2,8,5,3,4,7]
+    for thread_count in 1, 2, 4, 8:
+        results = list(parallel_pipe(jobs, dg_worker, thread_count))
+        assert_equals(results, jobs)
