@@ -63,7 +63,7 @@ def _uncompress_file_to_string(src_file, want_seg_sum=None, laq=None):
             raise RuntimeError('require want_seg_sum and laq to unpack a compound block')
         overall_sum = f.readline().strip()
         embedded_seg_count = int(f.readline().strip())
-        embedded_segs = list()
+        embedded_segs = []
         for _ in range(embedded_seg_count):
             embedded_segs.append(f.readline())
         xz_data = f.read()
@@ -89,7 +89,7 @@ def _uncompress_file_to_string(src_file, want_seg_sum=None, laq=None):
         raise FormatError("invalid first byte of compressed block", (src_file, format_byte))
 
 def repack_blocks(blockdir, repack_sums):
-    idxlines = list()
+    idxlines = []
     compound_data = ''
     for s in repack_sums:
         seg_data = _uncompress_file_to_string(os.path.join(blockdir, s))
