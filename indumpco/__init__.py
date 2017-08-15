@@ -2,7 +2,7 @@
 import os, hashlib, sys, zlib, lzma, re
 import fletcher_sum_split
 from pll_pipe import parallel_pipe
-from lookahead_queue import LookaheadQueue
+from qa_caching_q import QACacheQueue
 
 class Error(Exception):
     pass
@@ -39,7 +39,10 @@ def split_filehandle_into_segments(src_file):
             return
         yield seg
 
-def parse_idxline(idxline):
+def pack_idxline(seg_len, seg_sum):
+    return "%d %s\n" % (int(seg_len), seg_sum)
+
+def unpack_idxline(idxline):
     hit = re.match(r'^([0-9]+) (\w+)\s*$', idxline)
     if not hit:
         raise FormatError("malformed line in index file", (idxline,))
@@ -53,14 +56,14 @@ def _compress_string_to_file(src_str, dest_file):
     f.write(zlib.compress(src_str, 9))
     f.close()
 
-def _uncompress_file_to_string(src_file, want_seg_sum=None, laq=None):
+def _uncompress_file_to_string(src_file, want_seg_sum=None, idxline_seg_cachedq=None):
     f = open(src_file)
     format_byte = f.read(1)
     if format_byte == 'z':
         return zlib.decompress(f.read())
     elif format_byte == 'x':
-        if want_seg_sum is None or laq is None:
-            raise RuntimeError('require want_seg_sum and laq to unpack a compound block')
+        if want_seg_sum is None or idxline_seg_cachedq is None:
+            raise RuntimeError('require want_seg_sum and idxline_seg_cachedq to unpack a compound block')
         overall_sum = f.readline().strip()
         embedded_seg_count = int(f.readline().strip())
         embedded_segs = []
@@ -68,11 +71,13 @@ def _uncompress_file_to_string(src_file, want_seg_sum=None, laq=None):
             embedded_segs.append(f.readline())
         xz_data = f.read()
         unpacked_data = lzma.decompress(xz_data)
+        overall_idxline = pack_idxline(len(unpacked_data), overall_sum)
+        idxline_seg_cachedq.offer_answer(overall_idxline, unpacked_data)
         offset = 0
         desired_data = None
         for idxline in embedded_segs:
-            seg_len, seg_sum = parse_idxline(idxline)
-            laq.put_answer(idxline, unpacked_data[offset:offset+seg_len])
+            seg_len, seg_sum = unpack_idxline(idxline)
+            idxline_seg_cachedq.offer_answer(idxline, unpacked_data[offset:offset+seg_len])
             if seg_sum == want_seg_sum:
                 desired_data = unpacked_data[offset:offset+seg_len]
             offset += seg_len
@@ -93,7 +98,7 @@ def repack_blocks(blockdir, repack_sums):
     compound_data = ''
     for s in repack_sums:
         seg_data = _uncompress_file_to_string(os.path.join(blockdir, s))
-        idxlines.append('%d %s\n' % (len(seg_data), s))
+        idxlines.append(pack_idxline(len(seg_data), s))
         compound_data += seg_data
 
     compound_sum = hashlib.md5(compound_data).hexdigest()
@@ -128,24 +133,22 @@ def extract_dump(dumpdir, extra_block_dirs=[], thread_count=4):
         uncompressed dump.
     """
     seg_search_path = [_blockdir(dumpdir)] + extra_block_dirs
-    idxline_laq = LookaheadQueue(src_iterable = open(os.path.join(dumpdir, 'index')))
+    idxline_cachedseg_iter = QACacheQueue(src_iterable = open(os.path.join(dumpdir, 'index')))
 
-    def _idxline_processor(q, idxline):
-        if idxline_laq.have_answer(idxline):
-            seg = idxline_laq.get_answer(idxline)
-        else:
-            seg_len, seg_sum = parse_idxline(idxline)
+    def _idxline_processor(q, idxline_cachedseg):
+        idxline, seg = idxline_cachedseg
+        if seg is None:
+            seg_len, seg_sum = unpack_idxline(idxline)
             blk_file = _path_search(seg_sum, seg_search_path)
             if blk_file is None:
                 raise FormatError("index references a missing block file", (dumpdir, seg_sum, seg_search_path))
-            seg = _uncompress_file_to_string(blk_file, seg_sum, idxline_laq)
+            seg = _uncompress_file_to_string(blk_file, seg_sum, idxline_cachedseg_iter)
             if len(seg) != seg_len:
                 raise FormatError("Uncompressed segment has the wrong length", (dumpdir, blk_file, seg_len))
 
-        idxline_laq.dec_refcnt(idxline)
         q.put(seg)
 
-    return parallel_pipe(idxline_laq, _idxline_processor, thread_count)
+    return parallel_pipe(idxline_cachedseg_iter, _idxline_processor, thread_count)
 
 def create_dump(src_fh, outdir, dumpdirs_for_reuse=[], thread_count=8, remote_seg_list_file=None):
     os.mkdir(outdir)
@@ -174,7 +177,7 @@ def create_dump(src_fh, outdir, dumpdirs_for_reuse=[], thread_count=8, remote_se
     src_iterator = split_filehandle_into_segments(src_fh)
     pipe = parallel_pipe(src_iterator, _seg_processor, thread_count)
     for segsum, seglen in pipe:
-        idx_fh.write("%d %s\n" % (seglen, segsum))
+        idx_fh.write(pack_idxline(seglen, segsum))
 
 def _block_for_reuse(blk_reuse_dirs, segsum):
     for blkdir in blk_reuse_dirs:
