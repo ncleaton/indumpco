@@ -9,4 +9,4 @@ parser.add_argument('extra_blockdirs', nargs='*', help='Other directories in whi
 
 args = parser.parse_args()
 for block in extract_dump(args.dumpdir, args.extra_blockdirs):
-	sys.stdout.write(block)
+    sys.stdout.write(block)

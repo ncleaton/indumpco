@@ -18,14 +18,14 @@ digest="`$dump_command | tee >(indumpco-create "$dumpdir" "$dest_basedir/indumpc
 
 if ! test "$?" = "0"
 then
-	echo "dump command failed" >&2
-	exit -1
+    echo "dump command failed" >&2
+    exit -1
 fi
 
 if ! test -e "$dumpdir/indumpco-ok" 
 then
-	echo "indumpco-create failed" >&2
-	exit -1
+    echo "indumpco-create failed" >&2
+    exit -1
 fi
 
 echo "$digest" >"$dumpdir/sha256sum"
