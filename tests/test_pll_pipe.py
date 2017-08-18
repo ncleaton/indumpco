@@ -1,10 +1,5 @@
 import sys, os, time, threading
 from nose.tools import assert_equals, raises
-
-for libdir in os.listdir('build'):
-    if libdir.startswith('lib.'):
-        sys.path.insert(0, os.path.join('build', libdir))
-
 from indumpco.pll_pipe import parallel_pipe
 
 class FaultyWorkerError(StandardError):

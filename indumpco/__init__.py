@@ -2,7 +2,7 @@
 import os, hashlib, sys, zlib, lzma, re
 import fletcher_sum_split
 from pll_pipe import parallel_pipe
-from qa_caching_q import QACacheQueue
+from qa_caching_q import QACacheQueue, NOT_IN_CACHE
 
 class Error(Exception):
     pass
@@ -56,48 +56,60 @@ def _compress_string_to_file(src_str, dest_file):
     f.write(zlib.compress(src_str, 9))
     f.close()
 
-def _uncompress_file_to_string(src_file, want_seg_sum=None, idxline_seg_cachedq=None):
-    f = open(src_file)
-    format_byte = f.read(1)
-    if format_byte == 'z':
-        return zlib.decompress(f.read())
-    elif format_byte == 'x':
-        if want_seg_sum is None or idxline_seg_cachedq is None:
-            raise RuntimeError('require want_seg_sum and idxline_seg_cachedq to unpack a compound block')
-        overall_sum = f.readline().strip()
-        embedded_seg_count = int(f.readline().strip())
-        embedded_segs = []
-        for _ in range(embedded_seg_count):
-            embedded_segs.append(f.readline())
-        xz_data = f.read()
-        unpacked_data = lzma.decompress(xz_data)
-        overall_idxline = pack_idxline(len(unpacked_data), overall_sum)
-        idxline_seg_cachedq.offer_answer(overall_idxline, unpacked_data)
-        offset = 0
-        desired_data = None
-        for idxline in embedded_segs:
-            seg_len, seg_sum = unpack_idxline(idxline)
-            idxline_seg_cachedq.offer_answer(idxline, unpacked_data[offset:offset+seg_len])
-            if seg_sum == want_seg_sum:
-                desired_data = unpacked_data[offset:offset+seg_len]
-            offset += seg_len
-        if offset != len(unpacked_data):
-            raise ValueError("xz data len not consistent with seg lens in header", src_file)
-        if want_seg_sum == overall_sum:
-            # desired data is the entire xz block
-            return unpacked_data
-        elif desired_data is not None:
-            return desired_data
+class BlockFileRead(object):
+    def __init__(self, idxline, seg_search_path):
+        self.idxline = idxline
+        self.seg_len, self.seg_sum = unpack_idxline(idxline)
+        self.blk_file = _path_search(self.seg_sum, seg_search_path)
+        if self.blk_file is None:
+            raise FormatError("index references a missing block file", (self.seg_sum, seg_search_path))
+        self.blk_fh = open(self.blk_file)
+        self.format_byte = self.blk_fh.read(1)
+        if self.format_byte == 'z':
+            self.byproduct_idxlines = []
+        elif self.format_byte == 'x':
+            self.overall_sum = self.blk_fh.readline().strip()
+            embedded_idxline_count = int(self.blk_fh.readline().strip())
+            self.embedded_idxlines = []
+            for _ in range(embedded_idxline_count):
+                self.embedded_idxlines.append(self.blk_fh.readline())
+            self.overall_len = sum([unpack_idxline(i)[0] for i in self.embedded_idxlines])
+            self.overall_idxline = pack_idxline(self.overall_len, self.overall_sum)
+            self.all_idxlines = self.embedded_idxlines + [self.overall_idxline]
+            self.byproduct_idxlines = [x for x in self.all_idxlines if x != idxline]
+            if idxline not in self.embedded_idxlines:
+                raise ValueError("desired sum not found in compound block", (idxline, self.blk_file))
         else:
-            raise ValueError("desired sum not found in compound block", (src_file, want_seg_sum))
-    else:
-        raise FormatError("invalid first byte of compressed block", (src_file, format_byte))
+            raise FormatError("invalid first byte of compressed block", (self.blk_file, format_byte))
+
+    def read_and_uncompress(self):
+        if self.format_byte == 'z':
+            return zlib.decompress(self.blk_fh.read()), []
+        elif self.format_byte == 'x':
+            xz_data = self.blk_fh.read()
+            unpacked_data = lzma.decompress(xz_data)
+            idxline_to_seg = {}
+            idxline_to_seg[self.overall_idxline] = unpacked_data
+            offset = 0
+            for idxline in self.embedded_idxlines:
+                seg_len, seg_sum = unpack_idxline(idxline)
+                idxline_to_seg[idxline] = unpacked_data[offset:offset+seg_len]
+                offset += seg_len
+            if offset != len(unpacked_data):
+                raise ValueError("lzma data len not consistent with seg lens in header", self.blk_file)
+            byproduct_qa = [(idxline, idxline_to_seg[idxline]) for idxline in self.all_idxlines if idxline != self.idxline]
+            return idxline_to_seg[self.idxline], byproduct_qa
+        else:
+            raise FormatError("invalid first byte of compressed block", (self.blk_file, format_byte))
 
 def repack_blocks(blockdir, repack_sums):
     idxlines = []
     compound_data = ''
     for s in repack_sums:
-        seg_data = _uncompress_file_to_string(os.path.join(blockdir, s))
+        f = open(os.path.join(blockdir, s))
+        if f.read(1) != 'z':
+            raise ValueError('attempt to repack non-zlib block', s)
+        seg_data = zlib.decompress(f.read())
         idxlines.append(pack_idxline(len(seg_data), s))
         compound_data += seg_data
 
@@ -133,22 +145,21 @@ def extract_dump(dumpdir, extra_block_dirs=[], thread_count=4):
         uncompressed dump.
     """
     seg_search_path = [_blockdir(dumpdir)] + extra_block_dirs
-    idxline_cachedseg_iter = QACacheQueue(src_iterable = open(os.path.join(dumpdir, 'index')))
+    idxline_qa_iter = QACacheQueue(src_iterable = open(os.path.join(dumpdir, 'index')))
 
-    def _idxline_processor(q, idxline_cachedseg):
-        idxline, seg = idxline_cachedseg
-        if seg is None:
-            seg_len, seg_sum = unpack_idxline(idxline)
-            blk_file = _path_search(seg_sum, seg_search_path)
-            if blk_file is None:
-                raise FormatError("index references a missing block file", (dumpdir, seg_sum, seg_search_path))
-            seg = _uncompress_file_to_string(blk_file, seg_sum, idxline_cachedseg_iter)
-            if len(seg) != seg_len:
-                raise FormatError("Uncompressed segment has the wrong length", (dumpdir, blk_file, seg_len))
+    def _idxline_processor(outq, idxline):
+        seg = idxline_qa_iter.consume_cached_answer(idxline)
+        if seg is NOT_IN_CACHE:
+            blk_file_reader = BlockFileRead(idxline, seg_search_path)
+            if idxline_qa_iter.i_should_compute(idxline, blk_file_reader.byproduct_idxlines):
+                seg, byproduct_idxline_seg = blk_file_reader.read_and_uncompress()
+                idxline_qa_iter.i_have_computed(idxline, seg, byproduct_idxline_seg)
+            else:
+                idxline_qa_iter.put_answer_when_ready(idxline, outq)
+                return
+        outq.put(seg)
 
-        q.put(seg)
-
-    return parallel_pipe(idxline_cachedseg_iter, _idxline_processor, thread_count)
+    return parallel_pipe(idxline_qa_iter, _idxline_processor, thread_count)
 
 def create_dump(src_fh, outdir, dumpdirs_for_reuse=[], thread_count=8, remote_seg_list_file=None):
     os.mkdir(outdir)
