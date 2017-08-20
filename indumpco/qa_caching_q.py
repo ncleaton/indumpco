@@ -97,7 +97,7 @@ class QACacheQueue(object):
             if main_question in self.answers or main_question in self.in_progress_callback_queues:
                 return False
             else:
-                for q in [main_question] + byproduct_questions:
+                for q in [main_question] + list(byproduct_questions):
                     if q in self.refcnt and q not in self.answers and q not in self.in_progress_callback_queues:
                         self.in_progress_callback_queues[q] = []
                 return True
