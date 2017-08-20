@@ -1,5 +1,6 @@
 
 import threading, Queue, sys
+import weakref
 
 _NO_MORE_INPUT = object()
 
@@ -8,29 +9,49 @@ class PipeState(object):
         self.dest_queue = Queue.Queue(maxsize=queue_maxsize)
 
         self.source_queue = Queue.Queue(maxsize=queue_maxsize)
-        self.source_queue_lock = threading.RLock()
         self.source_queue_finished = False
+        self.source_queue_lock = threading.RLock()
 
+        self.transient_queues = weakref.WeakSet()
         self.exception = None
-        self.exception_lock = threading.RLock()
+        self.state_lock = threading.RLock()
 
     def record_exception(self, exc):
-        with self.exception_lock:
-            if self.exception is None:
-                self.exception = exc
+        with self.state_lock:
+            if self.exception is not None:
+                return
+            self.exception = exc
 
+            # Help any blocked threads to exit
+            for q in list(self.transient_queues):
+                try:
+                    q.put(_NO_MORE_INPUT, block=False)
+                except Queue.Full:
+                    pass
+            q = Queue.Queue()
+            q.put(_NO_MORE_INPUT)
+            try:
+                self.dest_queue.put(q, block=False)
+            except Queue.Full:
+                pass
+            while True:
+                try:
+                    self.source_queue.get(block=False)
+                except Queue.Empty:
+                    break
+            self.source_queue.put(_NO_MORE_INPUT)
 
 def _source_reader_thread(pipe_state, source_iterable):
     # A thread to read from the input iterable into a queue.
     try:
         for job in source_iterable:
-            with pipe_state.exception_lock:
+            with pipe_state.state_lock:
                 if pipe_state.exception is not None:
                     break
 
             pipe_state.source_queue.put(job)
 
-            with pipe_state.exception_lock:
+            with pipe_state.state_lock:
                 if pipe_state.exception is not None:
                     break
     except Exception:
@@ -49,6 +70,7 @@ def _worker_thread(pipe_state, worker_func):
             # The placeholder takes the form of a reference to another queue, to which the
             # result will be pushed when it's ready.
             my_q = Queue.Queue()
+            pipe_state.transient_queues.add(my_q)
             with pipe_state.source_queue_lock:
                 if pipe_state.source_queue_finished:
                     return
@@ -70,19 +92,6 @@ def _worker_thread(pipe_state, worker_func):
     except Exception:
         pipe_state.record_exception(sys.exc_info())
 
-        # Unblock the main thread
-        my_q.put(_NO_MORE_INPUT)
-        pipe_state.dest_queue.put(my_q) # This may or may not be needed, depending on where in the loop above the exception struck.
-
-        # Help the source reader thread to exit, it may be blocked on queue put.
-        with pipe_state.source_queue_lock:
-            if not pipe_state.source_queue_finished:
-                job = None
-                while job is not _NO_MORE_INPUT:
-                    job = pipe_state.source_queue.get()
-                pipe_state.source_queue_finished = True
-
-
 def _start_daemon_threads(target, args, count):
     tlist = []
     for _ in range(count):
@@ -91,7 +100,6 @@ def _start_daemon_threads(target, args, count):
         t.start()
         tlist.append(t)
     return tlist
-
 
 def parallel_pipe(source_iterable, worker_func, thread_count, queue_size=10):
     state = PipeState(queue_maxsize = thread_count * queue_size)
@@ -110,7 +118,7 @@ def parallel_pipe(source_iterable, worker_func, thread_count, queue_size=10):
     # something is blocked on put.
     while True:
         try:
-            state.dest_queue.get(False)
+            state.dest_queue.get(block=False)
         except Queue.Empty:
             break
 

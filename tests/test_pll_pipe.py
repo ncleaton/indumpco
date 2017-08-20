@@ -49,38 +49,71 @@ def test_exception_in_source_iterator_1thread():
 def test_exception_in_source_iterator_2threads():
     return list(parallel_pipe(faulty_job_generator(), worker_function, 2))
 
-def test_job_delegation():
-    # Allow only one thread at a time to do actual work, other worker
-    # threads delegate their tasks to this active thread.
+###########################################################################
 
-    class DelegateState(object):
-        def __init__(self):
-            self.lock = threading.RLock()
-            self.running = False
-            self.jobs = []
-    dg_state = DelegateState()
+# Allow only one thread at a time to do actual work, other worker
+# threads delegate their tasks to this active thread.
 
-    def dg_worker(q, job):
+class DelegateState(object):
+    def __init__(self):
+        self.lock = threading.RLock()
+
+    def reset(self):
+        self.running = False
+        self.jobs = []
+
+dg_state = DelegateState()
+
+def dg_worker(q, job):
+    with dg_state.lock:
+        dg_state.jobs.append((q, job))
+        if dg_state.running:
+            # another thread is active, let it do my work
+            return
+        else:
+            # I am the active thread
+            dg_state.running = True
+    while True:
         with dg_state.lock:
-            dg_state.jobs.append((q, job))
-            if dg_state.running:
-                # another thread is active, let it do my work
+            if len(dg_state.jobs) == 0:
+                dg_state.running = False
                 return
-            else:
-                # I am the active thread
-                dg_state.running = True
-        while True:
-            with dg_state.lock:
-                if len(dg_state.jobs) == 0:
-                    dg_state.running = False
-                    return
-                batch = dg_state.jobs
-                dg_state.jobs = []
-            for q, job in batch:
-                time.sleep(job / 100)
-                q.put(job)
+            batch = dg_state.jobs
+            dg_state.jobs = []
+        for q, job in batch:
+            if job == "die":
+                raise FaultyWorkerError()
+            time.sleep(job / 100)
+            q.put(job)
 
+def test_delegation():
     jobs = [3,15,1,9,2,8,5,3,4,7]
+    dg_state.reset()
     for thread_count in 1, 2, 4, 8:
         results = list(parallel_pipe(jobs, dg_worker, thread_count))
         assert_equals(results, jobs)
+
+@raises(FaultyWorkerError)
+def test_delegation_death_1():
+    dg_state.reset()
+    return list(parallel_pipe([3,15,1,9,"die",8,5,3,4,7], dg_worker, 1))
+
+@raises(FaultyWorkerError)
+def test_delegation_death_2():
+    dg_state.reset()
+    return list(parallel_pipe([3,15,1,9,"die",8,5,3,4,7], dg_worker, 2))
+
+@raises(FaultyWorkerError)
+def test_delegation_death_3():
+    dg_state.reset()
+    return list(parallel_pipe([3,15,1,9,"die",8,5,3,4,7], dg_worker, 3))
+
+@raises(FaultyWorkerError)
+def test_delegation_death_4():
+    dg_state.reset()
+    return list(parallel_pipe([3,15,1,9,"die",8,5,3,4,7], dg_worker, 4))
+
+@raises(FaultyWorkerError)
+def test_delegation_death_8():
+    dg_state.reset()
+    return list(parallel_pipe([3,15,1,9,"die",8,5,3,4,7], dg_worker, 8))
