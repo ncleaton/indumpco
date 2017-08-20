@@ -63,27 +63,20 @@ def repack_blocks(blockdir, repack_sums):
 def _blockdir(dump_rootdir):
     return os.path.join(dump_rootdir, 'blocks')
 
-def _path_search(seg_sum, path):
-    for d in path:
-        f = os.path.join(d, seg_sum)
-        if os.path.exists(f):
-            return f
-    return None
- 
 def extract_dump(dumpdir, extra_block_dirs=[], thread_count=4):
     """ Generator function for restoring a compressed dump
 
         Concatenate the values yielded by this generator to get the
         decompressed dump.
     """
-    seg_search_path = [_blockdir(dumpdir)] + extra_block_dirs
+    seg_search_path = file_format.BlockDirs([_blockdir(dumpdir)] + extra_block_dirs)
     idxline_qa_iter = QACacheQueue(src_iterable = open(os.path.join(dumpdir, 'index')))
 
     def _idxline_processor(outq, idxline):
         seg = idxline_qa_iter.consume_cached_answer(idxline)
         if seg is NOT_IN_CACHE:
             seg_len, seg_sum = file_format.unpack_idxline(idxline)
-            blk_filename = _path_search(seg_sum, seg_search_path)
+            blk_filename = seg_search_path.find_block(seg_sum)
             blk_file_reader = file_format.BlockFileRead(seg_sum, blk_filename)
             if idxline_qa_iter.i_should_compute(idxline, blk_file_reader.extra_idxlines):
                 extra_idxline_seg = []

@@ -69,6 +69,8 @@ class IndumpcoUnderTest(object):
         return ''.join((seg for seg in indumpco.extract_dump(self.dumpdir, extra_blkdirs)))
 
 
-def check_indumpco_restores_input(input_str):
+def check_indumpco_restores_input(input_str, mangler_callback=None):
     idc = IndumpcoUnderTest(input_str)
+    if mangler_callback is not None:
+        mangler_callback(idc)
     assert_equals(idc.restore_to_string(), input_str)

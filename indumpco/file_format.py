@@ -3,6 +3,7 @@
 import zlib
 import lzma
 import re
+import os
 
 class FormatError(Exception):
     pass
@@ -62,6 +63,24 @@ class BlockFileRead(object):
 
     def z_unpack_seg(self):
         return zlib.decompress(self.fh.read())
+
+class BlockDirs(object):
+    def __init__(self, dirs):
+        self.flat_dirs = []
+        self.stepped_dirs = []
+        for d in dirs:
+            if os.path.exists(os.path.join(d, '0')):
+                self.stepped_dirs.append(d)
+            else:
+                self.flat_dirs.append(d)
+
+    def find_block(self, seg_sum):
+        search_path = self.flat_dirs + [os.path.join(sd, seg_sum[0]) for sd in self.stepped_dirs]
+        for d in search_path:
+            f = os.path.join(d, seg_sum)
+            if os.path.exists(f):
+                return f
+        return None
 
 def compress_string_to_zfile(src_str, dest_file):
     f = open(dest_file, 'w')

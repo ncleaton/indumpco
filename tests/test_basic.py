@@ -8,6 +8,19 @@ def test_short_strings():
     for s in ('\r', '\n', '', 'x', '\0', '\\', 'foo', '0'):
         check_indumpco_restores_input(s)
     
+def test_stepped_blockdir():
+    def mangler(idc):
+        for hexdigit in [hex(x)[-1].lower() for x in range(16)]:
+            os.mkdir(os.path.join(idc.blockdir, hexdigit))
+        for seg in os.listdir(idc.blockdir):
+            if len(seg) > 2:
+                block_subdir = os.path.join(idc.blockdir, seg[0])
+                os.rename(os.path.join(idc.blockdir, seg), os.path.join(block_subdir, seg))
+
+    check_indumpco_restores_input('''afs lasfjlasf laskjdf lasfj asf
+asldf aslfjas lfdslad lkjsadflkasf lsaflasdfjsldfj sladfjlaldsfjlsajfsadf
+asdlf lasdfsad flsadladsdfj2 fsfsljflsfjs lasdfj    234028340f sadfjasflsl''', mangler)
+
 def test_long_string():
     input_str = ''.join(('%d bottles of beer on the wall, %d bottles of beer.\nIf one of those bottles should happen to fall, ' % (b,b) for b in xrange(500000, 1, -1)))
     orig = IndumpcoUnderTest(input_str)
