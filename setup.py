@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages, Extension
 setup(
     name = "InDumpCo",
-    version = "0.1",
+    version = "0.100",
     packages = ['indumpco'],
     scripts = ['bin/indumpco-create', 'bin/indumpco-extract', 'bin/indumpco-repack'],
     ext_modules = [Extension("indumpco.fletcher_sum_split", sources=["fletcher_sum_split.c"])],
