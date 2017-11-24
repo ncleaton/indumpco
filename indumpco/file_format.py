@@ -64,20 +64,31 @@ class BlockFileRead(object):
     def z_unpack_seg(self):
         return zlib.decompress(self.fh.read())
 
-class BlockDirs(object):
-    def __init__(self, dirs):
-        self.flat_dirs = []
-        self.stepped_dirs = []
-        for d in dirs:
-            if os.path.exists(os.path.join(d, '0')):
-                self.stepped_dirs.append(d)
-            else:
-                self.flat_dirs.append(d)
+class BlockDirBase(object):
+    def __init__(self, dirname):
+        self.dirname = dirname
+
+class FlatBlockDir(BlockDirBase):
+    def filename(self, seg_sum):
+        return os.path.join(self.dirname, seg_sum)
+
+class Nest1BlockDir(BlockDirBase):
+    def filename(self, seg_sum):
+        return os.path.join(self.dirname, os.path.join(seg_sum[0], seg_sum))
+
+def BlockDir(dirname):
+    if os.path.exists(os.path.join(dirname, "0")):
+        return Nest1BlockDir(dirname)
+    else:
+        return FlatBlockDir(dirname)
+
+class BlockSearchPath(object):
+    def __init__(self, dirnames):
+        self.block_dirs = [BlockDir(d) for d in dirnames]
 
     def find_block(self, seg_sum):
-        search_path = self.flat_dirs + [os.path.join(sd, seg_sum[0]) for sd in self.stepped_dirs]
-        for d in search_path:
-            f = os.path.join(d, seg_sum)
+        for bd in self.block_dirs:
+            f = bd.filename(seg_sum)
             if os.path.exists(f):
                 return f
         return None
